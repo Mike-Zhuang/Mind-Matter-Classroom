@@ -45,26 +45,21 @@ baseline_ear = 0.0
 baseline_roll = 0.0
 baseline_mar = 0.0 
 baseline_smile_ratio = 0.0 
-baseline_face_scale = 0.0 # 新增：记录校准时的脸部大小(眼距)
+baseline_face_scale = 0.0 
 
 CONFUSED_BROW_TRIGGER = 0.0
 SLEEP_EAR_TRIGGER = 0.0
 SQUINT_TRIGGER = 0.0 
 YAWN_TRIGGER = 0.0 
 
-# 基础阈值
 BASE_SMILE_ENTER = 0.0 
 BASE_SMILE_EXIT = 0.0  
 smile_active = False     
 
-# *** 核心参数：深度补偿系数 ***
-# 当脸变大时，每变大1倍，微笑门槛额外增加多少？
-# 0.15 意味着：如果脸变大1倍，门槛比值自动+15% (抵消你的110->130涨幅)
 DEPTH_COMPENSATION_FACTOR = 0.15 
-
 TILT_TRIGGER_ANGLE = 12.0  
 
-# 疲劳策略
+# --- 疲劳策略 ---
 fatigue_level = 0.0
 FATIGUE_MAX = 100.0
 FATIGUE_THRESHOLD = 80.0
@@ -81,8 +76,12 @@ FATIGUE_DEC_SMILE = 1.0
 eyes_closed_frame_counter = 0
 BLINK_FILTER_FRAMES = 8      
 
-confused_frame_counter = 0
-CONFUSED_CONFIRM_FRAMES = 5 
+# --- 新增：困惑进度条策略 ---
+confusion_level = 0.0
+CONFUSION_MAX = 100.0
+CONFUSION_THRESHOLD = 50.0  # 超过一半才触发
+CONFUSION_INC = 8.0         # 涨得比较快 (约0.3秒触发)
+CONFUSION_DEC = 10.0        # 降得更快 (一放松马上消失)
 
 DEBUG_POINT_INDICES = [33, 133, 159, 145, 362, 263, 386, 374, 336, 107, 234, 454, 13, 14, 61, 291]
 
@@ -121,7 +120,7 @@ while cap.isOpened():
                 pt = lm[idx]
                 cv2.circle(image, (int(pt.x * w), int(pt.y * h)), 3, (0, 255, 0), -1)
 
-            # --- 数据计算 ---
+            # 数据计算
             left_eye_v = calculate_pixel_distance(lm[159], lm[145], w, h)
             left_eye_h = calculate_pixel_distance(lm[33], lm[133], w, h)
             right_eye_v = calculate_pixel_distance(lm[386], lm[374], w, h)
@@ -130,10 +129,9 @@ while cap.isOpened():
             if right_eye_h == 0: right_eye_h = 1
             avg_ear = ((left_eye_v / left_eye_h) + (right_eye_v / right_eye_h)) / 2.0
 
-            # 这里的 face_scale 用内眼角间距 (最稳定的骨骼距离)
             inner_eye_dist = calculate_pixel_distance(lm[133], lm[362], w, h)
             if inner_eye_dist == 0: inner_eye_dist = 1
-            current_face_scale = inner_eye_dist # 当前脸有多大
+            current_face_scale = inner_eye_dist 
 
             brow_dist = calculate_pixel_distance(lm[336], lm[107], w, h)
             brow_ratio = brow_dist / inner_eye_dist
@@ -146,10 +144,9 @@ while cap.isOpened():
 
             roll = get_head_roll(lm, w, h)
 
-            # --- 校准 ---
+            # 校准
             if not is_calibrated:
                 current_state = "CALIBRATING..."
-                # 记录当前的脸部大小
                 calibration_data.append([avg_ear, brow_ratio, roll, current_mar, current_smile_ratio, current_face_scale])
                 
                 progress = len(calibration_data) / CALIBRATION_FRAMES
@@ -170,39 +167,29 @@ while cap.isOpened():
                     SQUINT_TRIGGER = baseline_ear * 0.90
                     YAWN_TRIGGER = baseline_mar + 0.4
                     
-                    # 设定【基础】微笑阈值 (针对正常距离)
                     BASE_SMILE_ENTER = baseline_smile_ratio * 1.08
                     BASE_SMILE_EXIT = baseline_smile_ratio * 1.04
                     
                     is_calibrated = True
                     print(f"校准完成! BaseScale:{int(baseline_face_scale)}")
 
-            # --- 检测 ---
+            # 检测
             else:
                 is_eyes_fully_closed = avg_ear < SLEEP_EAR_TRIGGER
                 is_yawning = current_mar > YAWN_TRIGGER
                 
-                # *** 核心修改：动态计算微笑阈值 ***
-                # 1. 计算当前变焦倍率 (Scale Factor)
-                # 比如：当前 200px / 基准 100px = 2.0 (脸变大2倍)
+                # 微笑判定 (深度补偿)
                 scale_factor = current_face_scale / baseline_face_scale
-                
-                # 2. 计算深度补偿
-                # 脸越大，门槛越高。如果 scale_factor = 2.0，门槛增加 15%
                 depth_compensation = 1.0 + (scale_factor - 1.0) * DEPTH_COMPENSATION_FACTOR
-                
-                # 3. 应用补偿
-                # 注意：如果往后退(scale<1)，补偿系数<1，门槛自动降低，防止离远了笑不出来
                 adaptive_enter_thresh = BASE_SMILE_ENTER * depth_compensation
                 adaptive_exit_thresh = BASE_SMILE_EXIT * depth_compensation
 
-                # 4. 微笑判定
                 if not smile_active:
                     if current_smile_ratio > adaptive_enter_thresh: smile_active = True
                 else:
                     if current_smile_ratio < adaptive_exit_thresh: smile_active = False
                 
-                # 困惑特征
+                # 困惑特征检测 (Raw Features)
                 cond_frown = brow_ratio < CONFUSED_BROW_TRIGGER
                 is_squinting = (avg_ear < SQUINT_TRIGGER) and (avg_ear > SLEEP_EAR_TRIGGER)
                 is_slight_tension = brow_ratio < (baseline_brow * 0.995) 
@@ -212,16 +199,21 @@ while cap.isOpened():
                 diff_roll = abs(roll - baseline_roll)
                 is_tilting_raw = diff_roll > TILT_TRIGGER_ANGLE
 
-                # 微笑优先过滤
+                # 微笑时，强制不困惑
                 if smile_active:
                     is_confused_gesture_raw = False
                     is_tilting_raw = False
 
+                # *** 核心修改：困惑进度条逻辑 ***
                 if is_confused_gesture_raw or is_tilting_raw:
-                    confused_frame_counter += 1
+                    confusion_level += CONFUSION_INC
                 else:
-                    confused_frame_counter = 0
-                is_confused_confirmed = confused_frame_counter >= CONFUSED_CONFIRM_FRAMES
+                    confusion_level -= CONFUSION_DEC
+                
+                confusion_level = max(0.0, min(confusion_level, CONFUSION_MAX))
+                
+                # 只有进度条超过阈值，才算真正的 CONFUSED
+                is_confused_confirmed = confusion_level > CONFUSION_THRESHOLD
 
                 # 眨眼过滤
                 if is_eyes_fully_closed:
@@ -232,7 +224,7 @@ while cap.isOpened():
 
                 status_detail = ""
 
-                # 平衡逻辑
+                # 疲劳/状态逻辑
                 if is_yawning:
                     fatigue_level += FATIGUE_INC_YAWN
                     status_detail = "Yawning (Fatigue+)"
@@ -259,6 +251,7 @@ while cap.isOpened():
                 
                 fatigue_level = max(0.0, min(fatigue_level, FATIGUE_MAX))
 
+                # 最终状态输出
                 if fatigue_level > FATIGUE_THRESHOLD:
                     current_state = "SLEEPY"
                     color = (0, 0, 255) 
@@ -266,7 +259,7 @@ while cap.isOpened():
                     current_state = "CONFUSED"
                     color = (0, 255, 255) 
                 elif smile_active:
-                    current_state = "NORMAL"
+                    current_state = "HAPPY"
                     color = (0, 255, 0)
                 else:
                     current_state = "NORMAL"
@@ -277,29 +270,32 @@ while cap.isOpened():
                 # --- 界面可视化 ---
                 cv2.putText(image, f"STATUS: {current_state}", (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 3)
 
-                # 微笑数值 (显示自适应门槛)
+                # 微笑数据
                 c_smile = (0, 255, 0) if smile_active else (200, 200, 200)
                 curr_disp = int(current_smile_ratio * 100)
-                
-                # 这里显示的 Trig 是会动态变化的！
                 thresh_disp = int((adaptive_exit_thresh if smile_active else adaptive_enter_thresh) * 100)
-                thresh_label = "Exit" if smile_active else "Enter"
+                cv2.putText(image, f"SmileRatio: {curr_disp} (>{thresh_disp})", (w-350, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, c_smile, 2)
                 
-                cv2.putText(image, f"SmileRatio: {curr_disp} ({thresh_label} > {thresh_disp})", (w-350, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, c_smile, 2)
-                
-                # 也可以显示一个 Scale 倍率，让你看到补偿有没有生效
-                cv2.putText(image, f"Zoom: {scale_factor:.2f}x", (w-350, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150,150,150), 1)
-
+                # 困惑原始数据
                 c_brow = (0, 0, 255) if is_confused_gesture_raw else (200, 200, 200)
-                cv2.putText(image, f"Brow: {brow_ratio*100:.1f} (Trig < {CONFUSED_BROW_TRIGGER*100:.1f})", (w-350, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, c_brow, 2)
+                cv2.putText(image, f"Brow: {brow_ratio*100:.1f}", (w-350, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, c_brow, 2)
 
-                bar_len = int((fatigue_level / FATIGUE_MAX) * 200)
-                cv2.rectangle(image, (w//2 - 100, h-40), (w//2 - 100 + bar_len, h-20), (0, 0, 255), -1)
+                # --- 绘制两个进度条 ---
+                # 1. 红色：疲劳条 (Fatigue)
+                bar_len_fatigue = int((fatigue_level / FATIGUE_MAX) * 200)
+                cv2.rectangle(image, (w//2 - 100, h-40), (w//2 - 100 + bar_len_fatigue, h-20), (0, 0, 255), -1)
                 cv2.rectangle(image, (w//2 - 100, h-40), (w//2 + 100, h-20), (255, 255, 255), 2)
                 cv2.putText(image, status_detail, (w//2 + 110, h-25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
 
-    
-    cv2.imshow('Future Classroom - Adaptive Depth', image)
+                # 2. 黄色：困惑条 (Confusion) - 放在右侧
+                bar_len_conf = int((confusion_level / CONFUSION_MAX) * 150)
+                # 只有有值的时候才画，不占地方
+                if confusion_level > 0:
+                    cv2.rectangle(image, (w-40, h-50), (w-20, h-50 - bar_len_conf), (0, 255, 255), -1)
+                    cv2.rectangle(image, (w-40, h-50), (w-20, h-200), (255, 255, 255), 1)
+                    cv2.putText(image, "Conf", (w-55, h-30), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,255,255), 1)
+
+    cv2.imshow('Future Classroom - Dual Bars', image)
 
 cap.release()
 cv2.destroyAllWindows()
