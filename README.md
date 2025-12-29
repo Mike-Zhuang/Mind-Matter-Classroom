@@ -37,3 +37,46 @@ pip install opencv-python mediapipe numpy
 python mind_reader.py
 ```
 
+### 2. Unity 端 (仿真层)
+
+本仓库为了便于 Git 备份与协作，只上传 Unity 项目中“必要且可复现”的部分文件；像 `Library/`、`Temp/`、`Logs/` 等 **体积巨大且可由 Unity 自动生成** 的目录已在 `.gitignore` 中排除。
+
+#### ✅ 仓库中包含 / 不包含的 Unity 文件
+
+- **会被上传（必要）**：
+  - `FutureClassroom/Assets/`（场景、脚本、资源等）
+  - `FutureClassroom/Packages/`（依赖与包配置）
+  - `FutureClassroom/ProjectSettings/`（项目设置，决定项目能否一致打开）
+- **不会被上传（自动生成/本地相关）**：
+  - `FutureClassroom/Library/`、`FutureClassroom/Temp/`、`FutureClassroom/Logs/`、`FutureClassroom/UserSettings/` 等
+  - `FutureClassroom/*.sln`、`FutureClassroom/*.csproj` 等 IDE 生成文件
+
+#### 2.1 安装 Unity 编辑器版本
+
+- 本项目的 Unity 版本记录在 `FutureClassroom/ProjectSettings/ProjectVersion.txt`。
+- 当前仓库对应版本为：`6000.3.1f1`。
+
+建议使用 **Unity Hub** 安装对应版本（版本不一致有概率出现 Package/渲染管线/脚本编译问题）。
+
+#### 2.2 在自己的电脑上打开项目（从零恢复）
+
+1. 克隆仓库到本地：
+
+```bash
+git clone https://github.com/Mike-Zhuang/Mind-Matter-Classroom.git
+cd Mind-Matter-Classroom
+```
+
+2. 打开 Unity Hub → **Add** / **Open** 项目 → 选择仓库里的 `FutureClassroom/` 文件夹。
+3. 第一次打开会进行导入与编译，并自动生成未上传的目录（例如 `Library/`）。这个过程可能需要几分钟，属于正常现象。
+4. 打开后如需运行：
+   - 在 Unity 中打开 `Assets/Scenes/` 下的场景（如果项目里有多个场景，请选择课程展示/主场景）。
+   - 点击 Play 进入仿真。
+
+#### 2.3 常见问题 (Troubleshooting)
+
+- **项目打开很慢 / 占用磁盘变大**：首次导入会生成 `Library/`，这是刻意不提交到 Git 的缓存。
+- **依赖缺失 / 包报错**：打开 `Window → Package Manager`，等待 Unity 自动解析 `Packages/manifest.json`；必要时重启 Unity。
+- **脚本工程文件没生成（看不到 .sln/.csproj）**：这些文件默认不提交；Unity 会在本地自动生成，或在 `Preferences → External Tools` 中重新生成。
+
+
