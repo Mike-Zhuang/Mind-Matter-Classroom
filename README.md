@@ -100,9 +100,9 @@ ZHIPU_API_KEY = "your_api_key_here"
 ### 🌍 学科模式说明
 * **😐 Normal (待机)**: 镜面水波，完全物理静止，等待手势搅动。
 * **😁 Happy (快乐)**: 雨滴模式，随机落下轻快的波纹。
-* **⚛️ Physics (物理)**: 模拟引力场，物体产生时空弯曲（配合右手黑洞手势效果最佳）。
-* **🌍 Geography (地理)**: 启用分层设色，随高度变化显示绿地、高山与雪顶。
-* **🏛️ History (历史)**: 金字塔矩阵，展示结构化数据的堆叠。
+* **⚛️ Physics (物理)**: 模拟引力场 (Gravity Wells)，物体产生时空弯曲，引力大小随距离衰减。
+* **🌍 Geography (地理)**: 启用分层设色 (Hypsometric Tinting)，随高度变化自动渲染绿地、黄土、高山与雪顶。
+* **📐 Math (数学)**: 生成马鞍面 (Saddle Surface) 或双曲抛物面，展示复杂的几何曲率。
 
 ---
 
@@ -120,7 +120,7 @@ graph TD
     
     G -- JSON/String --> H[Unity: SwarmController]
     
-    H --> I[流体物理引擎 (Wave Eq)]
+    H --> I["流体物理引擎 (Wave Eq)"]
     H --> J[机器人群体算法]
     I & J --> K[最终视觉呈现]
 ```
