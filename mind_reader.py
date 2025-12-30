@@ -8,14 +8,11 @@ import base64
 import requests
 import json
 
-# --- 1. 智谱 AI 配置 (Key已就位) ---
+# --- 1. 智谱 AI 配置 ---
 ZHIPU_API_KEY = "4633fe0c06c44b1ea80d3fd2febc800c.pJlOSVyHs3D33jsD"
 ZHIPU_API_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
 
 def analyze_book_with_zhipu(image):
-    """
-    发送图片给智谱 GLM-4V，识别学科
-    """
     print("🤖 正在请求智谱 AI (GLM-4V)...")
     _, buffer = cv2.imencode('.jpg', image)
     img_str = base64.b64encode(buffer).decode('utf-8')
@@ -53,19 +50,13 @@ sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 def send_to_unity(message):
     sock.sendto(message.encode(), (UDP_IP, UDP_PORT))
 
-# --- 3. MediaPipe 初始化 (Face + Hands) ---
+# --- 3. MediaPipe 初始化 ---
 mp_face_mesh = mp.solutions.face_mesh
 face_mesh = mp_face_mesh.FaceMesh(max_num_faces=1, refine_landmarks=True, min_detection_confidence=0.5, min_tracking_confidence=0.5)
 
-# [核心升级] 开启双抓取
 mp_hands = mp.solutions.hands
-hands_tracker = mp_hands.Hands(
-    max_num_hands=2, # 双手模式
-    min_detection_confidence=0.7,
-    min_tracking_confidence=0.5
-)
+hands_tracker = mp_hands.Hands(max_num_hands=2, min_detection_confidence=0.7, min_tracking_confidence=0.5)
 
-# --- 辅助函数 ---
 def calculate_pixel_distance(p1, p2, w, h):
     x1, y1 = p1.x * w, p1.y * h
     x2, y2 = p2.x * w, p2.y * h
@@ -117,7 +108,9 @@ BLINK_FILTER_FRAMES = 8
 confusion_level = 0.0
 CONFUSION_MAX = 100.0
 CONFUSION_THRESHOLD = 50.0 
-CONFUSION_INC = 1.5         
+
+# [修改点]：困惑条速度稍微调快一点 (1.5 -> 3.0)
+CONFUSION_INC = 2.5         
 CONFUSION_DEC = 3.0        
 
 smile_level = 0.0
@@ -129,7 +122,7 @@ SMILE_DEC = 10.0
 DEBUG_POINT_INDICES = [33, 133, 159, 145, 362, 263, 386, 374, 336, 107, 234, 454, 13, 14, 61, 291]
 last_ai_result = "None"
 is_analyzing = False
-enable_hand_tracking = True # 手势总开关
+enable_hand_tracking = True 
 
 # --- 主程序 ---
 cap = cv2.VideoCapture(0)
@@ -167,7 +160,6 @@ while cap.isOpened():
             last_ai_result = "Unknown"
         is_analyzing = False
 
-    # 1. Face Mesh
     results_face = face_mesh.process(rgb_image)
     current_state = "Wait for Calib..."
     color = (200, 200, 200)
@@ -297,33 +289,24 @@ while cap.isOpened():
                     cv2.rectangle(image, (20, h-50), (40, h-200), (255, 255, 255), 1)
                     cv2.putText(image, "Joy", (15, h-30), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,255,0), 1)
 
-    # 2. [双极手势追踪]
+    # 2. 手势
     if enable_hand_tracking:
         results_hands = hands_tracker.process(rgb_image)
-        # 默认发两个 NONE，除非检测到
         hand_msg_l = "HAND_L:NONE"
         hand_msg_r = "HAND_R:NONE"
         
         if results_hands.multi_hand_landmarks and results_hands.multi_handedness:
             for idx, hand_handedness in enumerate(results_hands.multi_handedness):
                 hand_landmarks = results_hands.multi_hand_landmarks[idx]
-                
-                # 获取食指指尖 (8)
                 index_tip = hand_landmarks.landmark[8]
                 cx, cy = int(index_tip.x * w), int(index_tip.y * h)
-                
-                # 判断左右手 (MediaPipe的Left/Right通常是反的，需要测试)
-                # 这里我们假设 Label "Left" 就是屏幕上的左手（其实是用户的右手）
-                # 为了简单，我们直接用 Label 来区分颜色
                 label = hand_handedness.classification[0].label
                 
                 if label == "Left": 
-                    # 红色圈 = 左手 = 隆起
                     cv2.circle(image, (cx, cy), 15, (0, 0, 255), -1)
                     cv2.putText(image, "L", (cx-10, cy+5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
                     hand_msg_l = f"HAND_L:{index_tip.x},{index_tip.y}"
                 else: 
-                    # 蓝色圈 = 右手 = 黑洞
                     cv2.circle(image, (cx, cy), 15, (255, 0, 0), -1)
                     cv2.putText(image, "R", (cx-10, cy+5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
                     hand_msg_r = f"HAND_R:{index_tip.x},{index_tip.y}"
