@@ -61,13 +61,23 @@ conda activate future_class
 pip install -r requirements.txt
 ```
 
-**配置 API Key:**
+### 🔐 配置安全性 (Environment Variables)
 
-打开 `mind_reader.py`，找到以下代码行并填入你的 Key：
+为了保护您的 API Key 安全，建议不要将其直接硬编码在代码中。
 
-```python
-ZHIPU_API_KEY = "your_api_key_here" 
-```
+1.  **设置环境变量 (推荐)**:
+    在终端中运行以下命令（或将其添加到您的 shell 配置文件中）：
+    ```bash
+    export ZHIPU_API_KEY="your_api_key_here"
+    ```
+
+2.  **修改代码读取方式**:
+    打开 `mind_reader.py`，将 API Key 定义部分修改为：
+    ```python
+    import os
+    # 优先从环境变量读取，若不存在则使用默认值
+    ZHIPU_API_KEY = os.getenv("ZHIPU_API_KEY", "your_hardcoded_key_if_needed")
+    ```
 
 ### 2. Unity 端环境配置
 

@@ -7,10 +7,16 @@ import numpy as np
 import base64
 import requests
 import json
+import os
+from dotenv import load_dotenv # [新增] 用于读取 .env 文件
 
-# --- 1. 智谱 AI 配置 ---
-ZHIPU_API_KEY = "4633fe0c06c44b1ea80d3fd2febc800c.pJlOSVyHs3D33jsD"
+# --- 1. 智谱 AI 配置 (安全版) ---
+load_dotenv() # 加载同目录下的 .env 文件
+ZHIPU_API_KEY = os.getenv("ZHIPU_API_KEY") # 从环境变量中读取
 ZHIPU_API_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+
+if not ZHIPU_API_KEY:
+    print("❌ 警告: 未找到 API Key，请检查 .env 文件配置！")
 
 def analyze_book_with_zhipu(image):
     print("🤖 正在请求智谱 AI (GLM-4V)...")
