@@ -19,7 +19,10 @@ public class SwarmController : MonoBehaviour
 
     [Header("演示控制面板")]
     public Subject currentSubject = Subject.Physics;
-    public bool useManualControl = true; // ⚠️ 注意：Python连接时，建议把这个取消勾选，或者点击UI切换模式
+    public bool useManualControl = true;
+
+    // 手势交互开关
+    public bool enableHandInteraction = true;
 
     // 内部数据
     private List<GameObject> robots = new List<GameObject>();
@@ -40,6 +43,13 @@ public class SwarmController : MonoBehaviour
     // 状态变量
     private string currentState = "NORMAL";
     private string manualState = "NORMAL";
+
+    // [新增] 双手数据
+    private Vector2 leftHandPosNorm = Vector2.zero;
+    private bool isLeftHandActive = false;
+
+    private Vector2 rightHandPosNorm = Vector2.zero;
+    private bool isRightHandActive = false;
 
     private int rowCount;
     private int colCount;
@@ -99,6 +109,7 @@ public class SwarmController : MonoBehaviour
             Color finalColor = GetBaseColor();
             float heightDiff = robots[i].transform.position.y - originalPositions[i].y;
 
+            // 物理引力红 / 地形绿 / 其他
             if (currentSubject == Subject.Physics && GetActiveState() == "CONFUSED")
             {
                 float depth = Mathf.Abs(heightDiff);
@@ -107,7 +118,10 @@ public class SwarmController : MonoBehaviour
             else if (Mathf.Abs(heightDiff) > 0.01f)
             {
                 float h = Mathf.Clamp01(Mathf.Abs(heightDiff) / (maxSafeRadius * 0.8f));
-                if (currentSubject == Subject.Geography) finalColor = Color.Lerp(Color.green, new Color(0.6f, 0.4f, 0.2f), h);
+                // 如果是左手造的山，给它点神圣的金色
+                if (heightDiff > 0.2f && isLeftHandActive)
+                    finalColor = Color.Lerp(Color.white, Color.yellow, h);
+                else if (currentSubject == Subject.Geography) finalColor = Color.Lerp(Color.green, new Color(0.6f, 0.4f, 0.2f), h);
                 else if (currentSubject == Subject.Math) finalColor = Color.Lerp(Color.cyan, Color.magenta, h);
                 else if (currentSubject == Subject.History) finalColor = Color.Lerp(new Color(0.6f, 0.4f, 0.2f), Color.yellow, h);
             }
@@ -126,14 +140,24 @@ public class SwarmController : MonoBehaviour
     {
         string activeState = GetActiveState();
 
-        // 鼠标交互
-        Vector3 mouseImpactPos = Vector3.zero;
+        // --- 1. 计算交互点 ---
+        Vector3 leftHandWorld = Vector3.zero;
+        Vector3 rightHandWorld = Vector3.zero;
+
+        if (enableHandInteraction)
+        {
+            if (isLeftHandActive) leftHandWorld = MapHandToDesk(leftHandPosNorm);
+            if (isRightHandActive) rightHandWorld = MapHandToDesk(rightHandPosNorm);
+        }
+
+        // 鼠标备份 (当作右手/引力处理)
         bool isMouseDown = Input.GetMouseButton(0);
-        if (isMouseDown)
+        Vector3 mouseWorld = Vector3.zero;
+        if (isMouseDown && !isRightHandActive) // 只有右手不在时，鼠标才生效
         {
             Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
             RaycastHit hit;
-            if (Physics.Raycast(ray, out hit)) mouseImpactPos = hit.point;
+            if (Physics.Raycast(ray, out hit)) mouseWorld = hit.point;
         }
 
         for (int i = 0; i < robots.Count; i++)
@@ -141,6 +165,7 @@ public class SwarmController : MonoBehaviour
             Vector3 newPos = originalPositions[i];
             float yOffset = 0;
 
+            // --- 基础层：学科形状 ---
             if (activeState == "CONFUSED")
             {
                 switch (currentSubject)
@@ -171,19 +196,15 @@ public class SwarmController : MonoBehaviour
                                 if (distCircle < maxSafeRadius)
                                 {
                                     float noise = Mathf.PerlinNoise(originalPositions[i].x * 0.6f + Time.time * 0.05f, originalPositions[i].z * 0.6f);
-                                    yOffset = noise * (maxSafeRadius * 0.8f);
-                                    yOffset *= Mathf.SmoothStep(1.0f, 0.0f, distCircle / maxSafeRadius);
+                                    yOffset = noise * (maxSafeRadius * 0.8f) * Mathf.SmoothStep(1.0f, 0.0f, distCircle / maxSafeRadius);
                                 }
                             }
                             else if (currentSubject == Subject.Math)
                             {
                                 if (distCircle < maxSafeRadius)
                                 {
-                                    float nx = lx / maxSafeRadius;
-                                    float nz = lz / maxSafeRadius;
-                                    float val = (nx * nx) - (nz * nz);
-                                    yOffset = val * (maxSafeRadius * 0.8f);
-                                    yOffset += maxSafeRadius * 0.5f;
+                                    float nx = lx / maxSafeRadius; float nz = lz / maxSafeRadius;
+                                    yOffset = ((nx * nx) - (nz * nz)) * (maxSafeRadius * 0.8f) + maxSafeRadius * 0.5f;
                                 }
                             }
                             else if (currentSubject == Subject.History)
@@ -201,24 +222,49 @@ public class SwarmController : MonoBehaviour
             }
             else if (activeState == "SLEEPY")
             {
-                float wave = Mathf.Sin(originalPositions[i].x + Time.time) * 0.2f;
-                yOffset = wave;
+                yOffset = Mathf.Sin(originalPositions[i].x + Time.time) * 0.2f;
             }
 
-            if (isMouseDown)
+            // --- 交互层：双极力场 ---
+            if (enableHandInteraction)
             {
-                float distToMouse = Vector3.Distance(originalPositions[i], mouseImpactPos);
-                if (distToMouse < 1.0f)
+                // A. 左手 (隆起/山)
+                if (isLeftHandActive)
                 {
-                    float mouseEffect = -0.5f * (1.0f - distToMouse / 1.0f);
+                    float distL = Vector2.Distance(new Vector2(originalPositions[i].x, originalPositions[i].z), new Vector2(leftHandWorld.x, leftHandWorld.z));
+                    if (distL < 1.5f)
+                    {
+                        float lift = 0.8f * Mathf.Cos(distL * 1.5f); // 隆起
+                        if (lift > 0) yOffset += lift * (1.0f - distL / 1.5f);
+                    }
+                }
+
+                // B. 右手 (塌陷/黑洞)
+                if (isRightHandActive)
+                {
+                    float distR = Vector2.Distance(new Vector2(originalPositions[i].x, originalPositions[i].z), new Vector2(rightHandWorld.x, rightHandWorld.z));
+                    if (distR < 1.5f)
+                    {
+                        float sink = -0.8f * Mathf.Cos(distR * 1.5f); // 塌陷
+                        if (sink < 0) yOffset += sink * (1.0f - distR / 1.5f);
+                    }
+                }
+            }
+
+            // C. 鼠标备份 (塌陷)
+            if (isMouseDown && !isRightHandActive)
+            {
+                float distM = Vector2.Distance(new Vector2(originalPositions[i].x, originalPositions[i].z), new Vector2(mouseWorld.x, mouseWorld.z));
+                if (distM < 1.0f)
+                {
+                    float mouseEffect = -0.5f * (1.0f - distM / 1.0f);
                     yOffset += mouseEffect;
                 }
             }
 
             if (activeState == "HAPPY" || activeState == "NORMAL")
             {
-                float ripple = Mathf.Sin(Vector3.Distance(Vector3.zero, originalPositions[i]) - Time.time * 2f);
-                yOffset += ripple * 0.05f;
+                yOffset += Mathf.Sin(Vector3.Distance(Vector3.zero, originalPositions[i]) - Time.time * 2f) * 0.05f;
             }
 
             newPos.y += yOffset;
@@ -226,11 +272,19 @@ public class SwarmController : MonoBehaviour
         }
     }
 
+    Vector3 MapHandToDesk(Vector2 normPos)
+    {
+        float xPercent = 1.0f - normPos.x;
+        float yPercent = normPos.y;
+        float worldX = Mathf.Lerp(deskMinX, deskMaxX, xPercent);
+        float worldZ = Mathf.Lerp(deskMaxZ, deskMinZ, yPercent);
+        return new Vector3(worldX, 0, worldZ);
+    }
+
     void FindLargestSafeZone()
     {
         float maxDistFound = 0f;
         Vector3 bestPos = Vector3.zero;
-
         string activeState = GetActiveState();
         if (activeState != "CONFUSED") return;
 
@@ -249,17 +303,11 @@ public class SwarmController : MonoBehaviour
             float distToEdgeZ = Mathf.Min(Mathf.Abs(p.z - deskMinZ), Mathf.Abs(p.z - deskMaxZ));
             float distToEdge = Mathf.Min(distToEdgeX, distToEdgeZ);
             float finalSafeRadius = Mathf.Min(distToBook, distToEdge);
-
-            if (finalSafeRadius > maxDistFound)
-            {
-                maxDistFound = finalSafeRadius;
-                bestPos = p;
-            }
+            if (finalSafeRadius > maxDistFound) { maxDistFound = finalSafeRadius; bestPos = p; }
         }
         bestSpawnCenter = bestPos;
         maxSafeRadius = maxDistFound;
-        if (maxSafeRadius > 3.0f) maxSafeRadius = 3.0f;
-        if (maxSafeRadius < 0f) maxSafeRadius = 0f;
+        if (maxSafeRadius > 3.0f) maxSafeRadius = 3.0f; if (maxSafeRadius < 0f) maxSafeRadius = 0f;
     }
 
     bool IsCloseToAnyBook(Vector3 pos)
@@ -281,7 +329,6 @@ public class SwarmController : MonoBehaviour
         return new Color(0, 0.5f, 1f);
     }
 
-    // --- 核心修改：支持 SUB 指令的接收函数 ---
     private void ReceiveData()
     {
         try
@@ -295,24 +342,44 @@ public class SwarmController : MonoBehaviour
                     byte[] data = client.Receive(ref anyIP);
                     string message = Encoding.UTF8.GetString(data);
 
-                    // 1. 如果是学科切换指令 (SUB:Math)
                     if (message.StartsWith("SUB:"))
                     {
-                        string subName = message.Substring(4); // 截取后面的部分
+                        string subName = message.Substring(4);
                         if (subName == "Math") currentSubject = Subject.Math;
                         else if (subName == "Physics") currentSubject = Subject.Physics;
                         else if (subName == "Geography") currentSubject = Subject.Geography;
                         else if (subName == "History") currentSubject = Subject.History;
-
-                        // 收到学科指令后，自动切回 AI 模式，防止卡在手动
                         useManualControl = false;
                     }
-                    // 2. 否则是情绪状态 (HAPPY, CONFUSED...)
-                    else
+                    else if (message.StartsWith("HAND_L:"))
                     {
-                        currentState = message;
+                        string coordStr = message.Substring(7);
+                        if (coordStr == "NONE") isLeftHandActive = false;
+                        else
+                        {
+                            string[] coords = coordStr.Split(',');
+                            if (coords.Length == 2)
+                            {
+                                leftHandPosNorm = new Vector2(float.Parse(coords[0]), float.Parse(coords[1]));
+                                isLeftHandActive = true;
+                            }
+                        }
                     }
-
+                    else if (message.StartsWith("HAND_R:"))
+                    {
+                        string coordStr = message.Substring(7);
+                        if (coordStr == "NONE") isRightHandActive = false;
+                        else
+                        {
+                            string[] coords = coordStr.Split(',');
+                            if (coords.Length == 2)
+                            {
+                                rightHandPosNorm = new Vector2(float.Parse(coords[0]), float.Parse(coords[1]));
+                                isRightHandActive = true;
+                            }
+                        }
+                    }
+                    else { currentState = message; }
                 }
                 catch { }
             }
@@ -328,10 +395,8 @@ public class SwarmController : MonoBehaviour
 
     void OnGUI()
     {
-        GUIStyle style = new GUIStyle(GUI.skin.button);
-        style.fontSize = 14;
+        GUIStyle style = new GUIStyle(GUI.skin.button); style.fontSize = 14;
         GUI.Box(new Rect(10, 10, 260, 500), "未来教学控制台");
-
         if (useManualControl)
         {
             GUI.backgroundColor = new Color(1, 0.4f, 0.4f);
@@ -342,39 +407,33 @@ public class SwarmController : MonoBehaviour
             GUI.backgroundColor = new Color(0.4f, 1, 0.4f);
             if (GUI.Button(new Rect(20, 40, 240, 40), "🤖 模式: AI 情感同步", style)) useManualControl = true;
         }
-
         GUI.backgroundColor = Color.white;
-        GUI.Label(new Rect(20, 90, 200, 20), "当前学科 (可手动/AI):");
-
-        // 高亮当前学科
+        enableHandInteraction = GUI.Toggle(new Rect(20, 85, 200, 20), enableHandInteraction, "🖐️ 启用手势控制 (H键)");
+        GUI.Label(new Rect(20, 110, 200, 20), "1. 选择课程主题:");
         GUI.backgroundColor = (currentSubject == Subject.Geography) ? Color.cyan : Color.white;
-        if (GUI.Button(new Rect(20, 120, 115, 40), "🌍 地理")) currentSubject = Subject.Geography;
-
+        if (GUI.Button(new Rect(20, 135, 115, 40), "🌍 地理")) currentSubject = Subject.Geography;
         GUI.backgroundColor = (currentSubject == Subject.Math) ? Color.cyan : Color.white;
-        if (GUI.Button(new Rect(145, 120, 115, 40), "📐 数学")) currentSubject = Subject.Math;
-
+        if (GUI.Button(new Rect(145, 135, 115, 40), "📐 数学")) currentSubject = Subject.Math;
         GUI.backgroundColor = (currentSubject == Subject.Physics) ? Color.cyan : Color.white;
-        if (GUI.Button(new Rect(20, 170, 115, 40), "⚛️ 物理")) currentSubject = Subject.Physics;
-
+        if (GUI.Button(new Rect(20, 185, 115, 40), "⚛️ 物理")) currentSubject = Subject.Physics;
         GUI.backgroundColor = (currentSubject == Subject.History) ? Color.cyan : Color.white;
-        if (GUI.Button(new Rect(145, 170, 115, 40), "🏛️ 历史")) currentSubject = Subject.History;
-
+        if (GUI.Button(new Rect(145, 185, 115, 40), "🏛️ 历史")) currentSubject = Subject.History;
         GUI.backgroundColor = Color.white;
-
-        GUI.Label(new Rect(20, 230, 200, 20), "2. 触发状态:");
-
+        GUI.Label(new Rect(20, 240, 200, 20), "2. 触发状态:");
         if (useManualControl)
         {
-            if (GUI.Button(new Rect(20, 260, 240, 30), "😐 Normal")) manualState = "NORMAL";
-            if (GUI.Button(new Rect(20, 300, 240, 30), "😁 Happy")) manualState = "HAPPY";
+            if (GUI.Button(new Rect(20, 270, 240, 30), "😐 Normal")) manualState = "NORMAL";
+            if (GUI.Button(new Rect(20, 310, 240, 30), "😁 Happy")) manualState = "HAPPY";
             GUI.backgroundColor = Color.yellow;
-            if (GUI.Button(new Rect(20, 340, 240, 50), "🤔 Confused (自适应)", style)) manualState = "CONFUSED";
+            if (GUI.Button(new Rect(20, 350, 240, 50), "🤔 Confused (自适应)", style)) manualState = "CONFUSED";
             GUI.backgroundColor = Color.red;
-            if (GUI.Button(new Rect(20, 400, 240, 30), "😴 Sleepy")) manualState = "SLEEPY";
+            if (GUI.Button(new Rect(20, 410, 240, 30), "😴 Sleepy")) manualState = "SLEEPY";
         }
         else
         {
-            GUI.Label(new Rect(20, 260, 240, 100), "AI 监听中...\n情感: " + currentState + "\n学科: " + currentSubject);
+            string handStatus = (isLeftHandActive ? "L(山) " : "") + (isRightHandActive ? "R(海)" : "");
+            if (handStatus == "") handStatus = "无手势";
+            GUI.Label(new Rect(20, 270, 240, 100), $"AI 监听中...\n情感: {currentState}\n手势: {handStatus}");
         }
     }
 }

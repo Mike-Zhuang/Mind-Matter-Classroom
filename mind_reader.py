@@ -8,63 +8,39 @@ import base64
 import requests
 import json
 
-# --- 1. 智谱 AI 配置 (已保留你的 Key) ---
+# --- 1. 智谱 AI 配置 (Key已就位) ---
 ZHIPU_API_KEY = "4633fe0c06c44b1ea80d3fd2febc800c.pJlOSVyHs3D33jsD"
 ZHIPU_API_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
 
 def analyze_book_with_zhipu(image):
     """
-    发送图片给智谱 GLM-4V，识别学科 (增强版：关键词提取)
+    发送图片给智谱 GLM-4V，识别学科
     """
     print("🤖 正在请求智谱 AI (GLM-4V)...")
-    
     _, buffer = cv2.imencode('.jpg', image)
     img_str = base64.b64encode(buffer).decode('utf-8')
-    
-    headers = {
-        "Authorization": f"Bearer {ZHIPU_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    
+    headers = { "Authorization": f"Bearer {ZHIPU_API_KEY}", "Content-Type": "application/json" }
     prompt = "你是一个底层的分类API。请分析图片内容，判断它属于哪个学科。不要解释，不要标点，不要废话。请严格直接返回以下单词之一：Physics, Math, History, Geography。如果无法识别，返回 None。"
-    
     data = {
         "model": "glm-4v",
         "messages": [
-            {
-                "role": "user",
-                "content": [
-                    { "type": "text", "text": prompt },
-                    { "type": "image_url", "image_url": { "url": img_str } }
-                ]
-            }
+            { "role": "user", "content": [ { "type": "text", "text": prompt }, { "type": "image_url", "image_url": { "url": img_str } } ] }
         ],
         "temperature": 0.1
     }
-    
     try:
         response = requests.post(ZHIPU_API_URL, headers=headers, json=data)
         if response.status_code == 200:
             result = response.json()
             content = result['choices'][0]['message']['content'].strip()
             print(f"🤖 AI 原始回复: [{content}]")
-
             content_lower = content.lower()
-            detected_subject = "None"
-            
-            if "physics" in content_lower or "物理" in content_lower: detected_subject = "Physics"
-            elif "math" in content_lower or "数学" in content_lower: detected_subject = "Math"
-            elif "history" in content_lower or "历史" in content_lower: detected_subject = "History"
-            elif "geography" in content_lower or "地理" in content_lower: detected_subject = "Geography"
-            
-            if detected_subject != "None":
-                print(f"✅ 提取学科成功: {detected_subject}")
-                return detected_subject
-            else:
-                return "None"
-        else:
-            print(f"❌ API 错误: {response.status_code}")
-            return None
+            if "physics" in content_lower or "物理" in content_lower: return "Physics"
+            elif "math" in content_lower or "数学" in content_lower: return "Math"
+            elif "history" in content_lower or "历史" in content_lower: return "History"
+            elif "geography" in content_lower or "地理" in content_lower: return "Geography"
+            else: return "None"
+        else: return None
     except Exception as e:
         print(f"❌ 请求异常: {e}")
         return None
@@ -77,15 +53,19 @@ sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 def send_to_unity(message):
     sock.sendto(message.encode(), (UDP_IP, UDP_PORT))
 
-# --- 3. MediaPipe 初始化 ---
+# --- 3. MediaPipe 初始化 (Face + Hands) ---
 mp_face_mesh = mp.solutions.face_mesh
-face_mesh = mp_face_mesh.FaceMesh(
-    max_num_faces=1,
-    refine_landmarks=True,
-    min_detection_confidence=0.5,
+face_mesh = mp_face_mesh.FaceMesh(max_num_faces=1, refine_landmarks=True, min_detection_confidence=0.5, min_tracking_confidence=0.5)
+
+# [核心升级] 开启双抓取
+mp_hands = mp.solutions.hands
+hands_tracker = mp_hands.Hands(
+    max_num_hands=2, # 双手模式
+    min_detection_confidence=0.7,
     min_tracking_confidence=0.5
 )
 
+# --- 辅助函数 ---
 def calculate_pixel_distance(p1, p2, w, h):
     x1, y1 = p1.x * w, p1.y * h
     x2, y2 = p2.x * w, p2.y * h
@@ -96,14 +76,12 @@ def get_head_roll(landmarks, img_w, img_h):
     right_cheek = landmarks[454]
     dy = (right_cheek.y - left_cheek.y) * img_h
     dx = (right_cheek.x - left_cheek.x) * img_w
-    angle = math.degrees(math.atan2(dy, dx))
-    return angle
+    return math.degrees(math.atan2(dy, dx))
 
 # --- 变量初始化 ---
 calibration_data = []
 CALIBRATION_FRAMES = 30 
 is_calibrated = False
-
 baseline_brow = 0.0
 baseline_ear = 0.0
 baseline_roll = 0.0
@@ -148,17 +126,15 @@ SMILE_THRESHOLD = 40.0
 SMILE_INC = 2.0             
 SMILE_DEC = 10.0            
 
-# [关键点恢复]：把之前的关键点列表加回来
 DEBUG_POINT_INDICES = [33, 133, 159, 145, 362, 263, 386, 374, 336, 107, 234, 454, 13, 14, 61, 291]
-
-# AI 状态
 last_ai_result = "None"
 is_analyzing = False
+enable_hand_tracking = True # 手势总开关
 
 # --- 主程序 ---
 cap = cv2.VideoCapture(0)
 
-print("启动... 按 'c' 校准，按 'b' 识别书本/物体 (智谱AI)")
+print("启动... [C]校准 [B]识别书本 [H]手势开关")
 
 while cap.isOpened():
     success, image = cap.read()
@@ -168,21 +144,21 @@ while cap.isOpened():
     h, w, c = image.shape
     rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     
-    # 键盘监听
     key = cv2.waitKey(5) & 0xFF
-    if key == ord('q'):
-        break
+    if key == ord('q'): break
     elif key == ord('c'):
         is_calibrated = False
         calibration_data = []
         smile_active_raw = False 
         print("重置校准...")
+    elif key == ord('h'):
+        enable_hand_tracking = not enable_hand_tracking
+        print(f"手势控制: {enable_hand_tracking}")
     elif key == ord('b') and not is_analyzing:
         is_analyzing = True
-        cv2.putText(image, "Analyzing...", (w//2-100, h//2), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 3)
+        cv2.putText(image, "Scanning Book...", (w//2-150, h//2), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 3)
         cv2.imshow('Future Classroom - Dual Bars', image)
         cv2.waitKey(1) 
-        
         subject = analyze_book_with_zhipu(image)
         if subject in ['Physics', 'Math', 'History', 'Geography']:
             send_to_unity(f"SUB:{subject}")
@@ -191,20 +167,18 @@ while cap.isOpened():
             last_ai_result = "Unknown"
         is_analyzing = False
 
-    results = face_mesh.process(rgb_image)
+    # 1. Face Mesh
+    results_face = face_mesh.process(rgb_image)
     current_state = "Wait for Calib..."
     color = (200, 200, 200)
 
-    if results.multi_face_landmarks:
-        for face_landmarks in results.multi_face_landmarks:
+    if results_face.multi_face_landmarks:
+        for face_landmarks in results_face.multi_face_landmarks:
             lm = face_landmarks.landmark
-            
-            # [视觉恢复 1]：重新画出脸上的绿色关键点
             for idx in DEBUG_POINT_INDICES:
                 pt = lm[idx]
-                cv2.circle(image, (int(pt.x * w), int(pt.y * h)), 3, (0, 255, 0), -1)
+                cv2.circle(image, (int(pt.x * w), int(pt.y * h)), 2, (0, 255, 0), -1)
 
-            # --- 核心计算 ---
             left_eye_v = calculate_pixel_distance(lm[159], lm[145], w, h)
             left_eye_h = calculate_pixel_distance(lm[33], lm[133], w, h)
             right_eye_v = calculate_pixel_distance(lm[386], lm[374], w, h)
@@ -212,14 +186,11 @@ while cap.isOpened():
             if left_eye_h == 0: left_eye_h = 1
             if right_eye_h == 0: right_eye_h = 1
             avg_ear = ((left_eye_v / left_eye_h) + (right_eye_v / right_eye_h)) / 2.0
-
             inner_eye_dist = calculate_pixel_distance(lm[133], lm[362], w, h)
             if inner_eye_dist == 0: inner_eye_dist = 1
             current_face_scale = inner_eye_dist 
-
             brow_dist = calculate_pixel_distance(lm[336], lm[107], w, h)
             brow_ratio = brow_dist / inner_eye_dist
-            
             mouth_v = calculate_pixel_distance(lm[13], lm[14], w, h)
             mouth_h = calculate_pixel_distance(lm[61], lm[291], w, h) 
             current_mar = mouth_v / mouth_h
@@ -240,7 +211,6 @@ while cap.isOpened():
                     baseline_mar = np.mean(data[:, 3])
                     baseline_smile_ratio = np.mean(data[:, 4])
                     baseline_face_scale = np.mean(data[:, 5])
-                    
                     SLEEP_EAR_TRIGGER = baseline_ear * 0.70
                     CONFUSED_BROW_TRIGGER = baseline_brow * 0.98 
                     SQUINT_TRIGGER = baseline_ear * 0.90
@@ -248,7 +218,6 @@ while cap.isOpened():
                     BASE_SMILE_ENTER = baseline_smile_ratio * 1.08
                     BASE_SMILE_EXIT = baseline_smile_ratio * 1.04
                     is_calibrated = True
-                    print(f"校准完成!")
             else:
                 is_eyes_fully_closed = avg_ear < SLEEP_EAR_TRIGGER
                 is_yawning = current_mar > YAWN_TRIGGER
@@ -266,7 +235,6 @@ while cap.isOpened():
                 else: smile_level -= SMILE_DEC
                 smile_level = max(0.0, min(smile_level, SMILE_MAX))
                 is_happy_confirmed = smile_level > SMILE_THRESHOLD
-
                 cond_frown = brow_ratio < CONFUSED_BROW_TRIGGER
                 is_squinting = (avg_ear < SQUINT_TRIGGER) and (avg_ear > SLEEP_EAR_TRIGGER)
                 is_slight_tension = brow_ratio < (baseline_brow * 0.995) 
@@ -278,14 +246,12 @@ while cap.isOpened():
                 if is_happy_confirmed:
                     is_confused_gesture_raw = False
                     is_tilting_raw = False
-
                 if (is_confused_gesture_raw or is_tilting_raw) and not is_eyes_fully_closed:
                     confusion_level += CONFUSION_INC
                 else:
                     confusion_level -= CONFUSION_DEC
                 confusion_level = max(0.0, min(confusion_level, CONFUSION_MAX))
                 is_confused_confirmed = confusion_level > CONFUSION_THRESHOLD
-
                 if is_eyes_fully_closed: eyes_closed_frame_counter += 1
                 else: eyes_closed_frame_counter = 0
                 is_real_sleep = eyes_closed_frame_counter > BLINK_FILTER_FRAMES
@@ -293,80 +259,80 @@ while cap.isOpened():
                 status_detail = ""
                 if is_yawning:
                     fatigue_level += FATIGUE_INC_YAWN
-                    status_detail = "Yawning (Fatigue+)"
+                    status_detail = "Yawn"
                 elif is_real_sleep:
-                    if is_happy_confirmed: 
-                        fatigue_level += FATIGUE_INC_WITH_SMILE 
-                        status_detail = "Smiling Doze"
-                    else: 
-                        fatigue_level += FATIGUE_INC_NORMAL
-                        status_detail = "Sleeping"
+                    if is_happy_confirmed: fatigue_level += FATIGUE_INC_WITH_SMILE; status_detail = "Smiling Doze"
+                    else: fatigue_level += FATIGUE_INC_NORMAL; status_detail = "Sleep"
                 else:
-                    if is_happy_confirmed: 
-                        fatigue_level -= FATIGUE_DEC_SMILE
-                        status_detail = "Smiling :)"
-                    elif is_confused_confirmed: 
-                        fatigue_level -= FATIGUE_DEC_NORMAL
-                        status_detail = "Thinking"
-                    else: 
-                        fatigue_level -= FATIGUE_DEC_NORMAL
-                        if eyes_closed_frame_counter > 0: status_detail = "Blinking"
-                        else: status_detail = "Monitoring"
+                    if is_happy_confirmed: fatigue_level -= FATIGUE_DEC_SMILE; status_detail = "Smiling"
+                    elif is_confused_confirmed: fatigue_level -= FATIGUE_DEC_NORMAL; status_detail = "Think"
+                    else: fatigue_level -= FATIGUE_DEC_NORMAL; status_detail = "Monitor"
                 
                 fatigue_level = max(0.0, min(fatigue_level, FATIGUE_MAX))
-
-                if fatigue_level > FATIGUE_THRESHOLD:
-                    current_state = "SLEEPY"
-                    color = (0, 0, 255) 
-                elif is_confused_confirmed and not is_happy_confirmed:
-                    current_state = "CONFUSED"
-                    color = (0, 255, 255) 
-                elif is_happy_confirmed:
-                    current_state = "HAPPY"
-                    color = (0, 255, 0)
-                else:
-                    current_state = "NORMAL"
-                    color = (0, 255, 0)
+                if fatigue_level > FATIGUE_THRESHOLD: current_state = "SLEEPY"; color = (0, 0, 255) 
+                elif is_confused_confirmed and not is_happy_confirmed: current_state = "CONFUSED"; color = (0, 255, 255) 
+                elif is_happy_confirmed: current_state = "HAPPY"; color = (0, 255, 0)
+                else: current_state = "NORMAL"; color = (0, 255, 0)
 
                 send_to_unity(current_state)
 
-                # --- [视觉恢复 2]：UI 可视化绘制 ---
+                # UI
                 cv2.putText(image, f"STATUS: {current_state}", (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 3)
-                
-                # 显示 AI 结果
                 cv2.putText(image, f"AI Subject: {last_ai_result}", (30, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 255), 2)
-                cv2.putText(image, "[Press B to Scan]", (30, 140), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+                cv2.putText(image, status_detail, (w//2 + 110, h-25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
 
-                # [视觉恢复 3]：右上角数据
-                c_smile = (0, 255, 0) if smile_active_raw else (200, 200, 200)
-                curr_disp = int(current_smile_ratio * 100)
-                thresh_disp = int((adaptive_exit_thresh if smile_active_raw else adaptive_enter_thresh) * 100)
-                cv2.putText(image, f"SmileRatio: {curr_disp} (>{thresh_disp})", (w-350, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, c_smile, 2)
-                
-                c_brow = (0, 0, 255) if is_confused_gesture_raw else (200, 200, 200)
-                cv2.putText(image, f"Brow: {brow_ratio*100:.1f}", (w-350, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, c_brow, 2)
-
-                # 1. 红色：疲劳条
                 bar_len_fatigue = int((fatigue_level / FATIGUE_MAX) * 200)
                 cv2.rectangle(image, (w//2 - 100, h-40), (w//2 - 100 + bar_len_fatigue, h-20), (0, 0, 255), -1)
                 cv2.rectangle(image, (w//2 - 100, h-40), (w//2 + 100, h-20), (255, 255, 255), 2)
-                # [视觉恢复 4]：疲劳条上面的状态文字
-                cv2.putText(image, status_detail, (w//2 + 110, h-25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
-
-                # 2. 黄色：困惑条
+                
                 bar_len_conf = int((confusion_level / CONFUSION_MAX) * 150)
                 if confusion_level > 0:
                     cv2.rectangle(image, (w-40, h-50), (w-20, h-50 - bar_len_conf), (0, 255, 255), -1)
                     cv2.rectangle(image, (w-40, h-50), (w-20, h-200), (255, 255, 255), 1)
                     cv2.putText(image, "Conf", (w-55, h-30), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,255,255), 1)
 
-                # 3. 绿色：微笑蓄能条
                 bar_len_smile = int((smile_level / SMILE_MAX) * 150)
                 if smile_level > 0:
                     cv2.rectangle(image, (20, h-50), (40, h-50 - bar_len_smile), (0, 255, 0), -1)
                     cv2.rectangle(image, (20, h-50), (40, h-200), (255, 255, 255), 1)
                     cv2.putText(image, "Joy", (15, h-30), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,255,0), 1)
 
+    # 2. [双极手势追踪]
+    if enable_hand_tracking:
+        results_hands = hands_tracker.process(rgb_image)
+        # 默认发两个 NONE，除非检测到
+        hand_msg_l = "HAND_L:NONE"
+        hand_msg_r = "HAND_R:NONE"
+        
+        if results_hands.multi_hand_landmarks and results_hands.multi_handedness:
+            for idx, hand_handedness in enumerate(results_hands.multi_handedness):
+                hand_landmarks = results_hands.multi_hand_landmarks[idx]
+                
+                # 获取食指指尖 (8)
+                index_tip = hand_landmarks.landmark[8]
+                cx, cy = int(index_tip.x * w), int(index_tip.y * h)
+                
+                # 判断左右手 (MediaPipe的Left/Right通常是反的，需要测试)
+                # 这里我们假设 Label "Left" 就是屏幕上的左手（其实是用户的右手）
+                # 为了简单，我们直接用 Label 来区分颜色
+                label = hand_handedness.classification[0].label
+                
+                if label == "Left": 
+                    # 红色圈 = 左手 = 隆起
+                    cv2.circle(image, (cx, cy), 15, (0, 0, 255), -1)
+                    cv2.putText(image, "L", (cx-10, cy+5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
+                    hand_msg_l = f"HAND_L:{index_tip.x},{index_tip.y}"
+                else: 
+                    # 蓝色圈 = 右手 = 黑洞
+                    cv2.circle(image, (cx, cy), 15, (255, 0, 0), -1)
+                    cv2.putText(image, "R", (cx-10, cy+5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
+                    hand_msg_r = f"HAND_R:{index_tip.x},{index_tip.y}"
+
+        send_to_unity(hand_msg_l)
+        send_to_unity(hand_msg_r)
+
+    status_text = "Hand: ON" if enable_hand_tracking else "Hand: OFF"
+    cv2.putText(image, status_text, (w - 150, h - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
     cv2.imshow('Future Classroom - Dual Bars', image)
 
 cap.release()
