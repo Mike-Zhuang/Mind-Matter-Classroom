@@ -305,7 +305,7 @@ public class SwarmController : MonoBehaviour
         for (int i = 0; i < robots.Count; i++)
         {
             robots[i].transform.position = Vector3.Lerp(robots[i].transform.position, targetPositions[i], Time.deltaTime * 5.0f);
-
+            //想要接入真正机器人就可以在这里添加代码发送位置数据
             Color finalColor = GetBaseColor();
             float heightDiff = robots[i].transform.position.y - originalPositions[i].y;
 

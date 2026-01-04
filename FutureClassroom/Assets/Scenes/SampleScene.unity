@@ -417,6 +417,9 @@ MonoBehaviour:
   density: 0.15
   currentSubject: 0
   useManualControl: 0
+  enableHandInteraction: 1
+  fluidDamping: 0.93
+  waveSpeed: 10
   port: 5005
 --- !u!4 &483629435
 Transform:
