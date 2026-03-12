@@ -1,4 +1,4 @@
-# Mind-Matter: Embodied Swarm Intelligence for Future Classroom
+# Mind-Matter: An Embodied Cognition Classroom Enabled by Multimodal VLM and Swarm Robotics
 # 心物耦合：面向未来教室的具身智能群体机器人空间
 
 > 同济大学“未来技术导论”课程大作业 | Tongji University Future Technology Coursework
